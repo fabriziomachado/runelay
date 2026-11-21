@@ -6,6 +6,7 @@ import { MonogramTile } from "@/components/ui/display/monogram-tile";
 import { Switch } from "@/components/ui/form/switch";
 import { formatDate } from "@/lib/format";
 import { useT } from "@/lib/i18n";
+import { ResourceAccessPanel } from "@/modules/access/components/resource-access-panel";
 import { useSkillToggle } from "@/modules/skills/hooks/use-skill-toggle";
 import { SkillBody } from "./skill-body";
 import { SkillFiles } from "./skill-files";
@@ -49,6 +50,7 @@ export function SkillDetail({ skill }: SkillDetailProps) {
 
       <SkillBody key={skill.updatedAt} skill={skill} />
       <SkillFiles slug={skill.slug} files={skill.files} />
+      <ResourceAccessPanel type="skill" id={skill.slug} />
     </div>
   );
 }

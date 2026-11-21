@@ -113,4 +113,15 @@ export const MIGRATIONS = [
     created_at TEXT NOT NULL DEFAULT (${SQL_NOW})
   )`,
   "CREATE INDEX IF NOT EXISTS cli_auth_requests_expires ON cli_auth_requests (expires_at)",
+  "ALTER TABLE sources ADD COLUMN visibility TEXT NOT NULL DEFAULT 'org'",
+  "ALTER TABLE skills ADD COLUMN visibility TEXT NOT NULL DEFAULT 'org'",
+  `CREATE TABLE IF NOT EXISTS resource_access (
+    organization_id TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    key_name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (${SQL_NOW}),
+    PRIMARY KEY (organization_id, resource_type, resource_id, key_name)
+  )`,
+  "CREATE INDEX IF NOT EXISTS resource_access_key ON resource_access (organization_id, key_name)",
 ];

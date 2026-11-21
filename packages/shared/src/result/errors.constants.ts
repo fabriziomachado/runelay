@@ -8,6 +8,7 @@ export const ERROR_CATALOG = {
   SOURCE_NOT_FOUND: { status: 404, message: "Conexão não encontrada." },
   ORGANIZATION_REQUIRED: { status: 403, message: "Escolha uma organização para continuar." },
   FORBIDDEN: { status: 403, message: "Você não tem acesso a esta organização." },
+  ACCESS_DENIED: { status: 403, message: "Esta chave de API não tem acesso a este recurso." },
   LAST_ORGANIZATION: { status: 409, message: "Esta é a sua única organização." },
   MEMBERS_WITHOUT_ORGANIZATION: {
     status: 409,

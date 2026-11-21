@@ -2,6 +2,7 @@ import { serveStatic } from "@hono/bun";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { env } from "@/config/env";
+import { accessRoutes } from "@/modules/access/routes/access.routes";
 import { activityRoutes, onboardingRoutes, toolsRoutes } from "@/modules/activity/routes/activity.routes";
 import { apiKeysRoutes } from "@/modules/api-keys/routes/api-keys.routes";
 import { authRoutes } from "@/modules/auth/routes/auth.routes";
@@ -30,6 +31,7 @@ const v1 = new Hono()
   .route("/google", googleFilesRoutes)
   .route("/memories", memoriesRoutes)
   .route("/skills", skillsRoutes)
+  .route("/access", accessRoutes)
   .route("/context", contextRoutes)
   .route("/activity", activityRoutes)
   .route("/onboarding", onboardingRoutes)

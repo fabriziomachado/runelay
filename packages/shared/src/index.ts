@@ -1,3 +1,5 @@
+export * from "./access/access.schema";
+export type * from "./access/access.types";
 export * from "./activity/activity.schema";
 export type * from "./activity/activity.types";
 export * from "./api-keys/api-key.schema";

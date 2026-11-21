@@ -1,4 +1,5 @@
 import { layoutMessages } from "@/components/layout/i18n";
+import { accessMessages } from "@/modules/access/i18n";
 import { activityMessages } from "@/modules/activity/i18n";
 import { apiKeysMessages } from "@/modules/api-keys/i18n";
 import { authMessages } from "@/modules/auth/i18n";
@@ -23,6 +24,7 @@ const MODULES = {
   common: commonMessages,
   errors: errorMessages,
   layout: layoutMessages,
+  access: accessMessages,
   activity: activityMessages,
   apiKeys: apiKeysMessages,
   auth: authMessages,

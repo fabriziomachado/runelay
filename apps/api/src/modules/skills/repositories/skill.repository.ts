@@ -237,6 +237,9 @@ export const deleteSkillRow = (organizationId: string, slug: string): Result<nul
       const removed = db.query("DELETE FROM skills WHERE organization_id = ? AND slug = ?").run(organizationId, slug);
       db.query("DELETE FROM skill_files WHERE organization_id = ? AND skill_slug = ?").run(organizationId, slug);
       db.query("DELETE FROM skills_fts WHERE organization_id = ? AND slug = ?").run(organizationId, slug);
+      db.query(
+        "DELETE FROM resource_access WHERE organization_id = ? AND resource_type = 'skill' AND resource_id = ?",
+      ).run(organizationId, slug);
       return removed.changes;
     }),
     "STORAGE_FAILED",

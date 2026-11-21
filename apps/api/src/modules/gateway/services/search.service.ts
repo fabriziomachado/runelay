@@ -10,9 +10,11 @@ import type { SearchToolsInput, ToolSummary } from "@/modules/gateway/types/gate
 export const searchTools = async (
   organizationId: string,
   { query, source, limit }: SearchToolsInput,
+  hiddenSources: ReadonlySet<string> = new Set(),
 ): Promise<Result<ToolSummary[]>> => {
-  const tools = await listLiveTools(organizationId);
-  if (tools.error) return tools;
+  const live = await listLiveTools(organizationId);
+  if (live.error) return live;
+  const tools = { data: live.data.filter((tool) => !hiddenSources.has(tool.source)) };
   const terms = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const matches = tools.data
     .filter((tool) => !source || tool.source === source)
