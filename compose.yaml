@@ -6,4 +6,4 @@ services:
     ports:
       - "127.0.0.1:4312:4312"
     volumes:
-      - ./data:/data
+      - /etc/dokploy/compose/poc-runelay-d8l5sa/data:/data
