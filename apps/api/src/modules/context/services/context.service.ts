@@ -62,8 +62,12 @@ export const pinnedInstructions = (organizationId: string, budget: number): Resu
   return ok(fitLines(BRIEF_PINNED_TITLE, lines, budget, PINNED_TRUNCATED));
 };
 
-export const buildBrief = (organizationId: string, client: ContextClient): Result<ContextBriefView> => {
-  const sources = loadBriefSources(organizationId);
+export const buildBrief = (
+  organizationId: string,
+  client: ContextClient,
+  hiddenSkills: Iterable<string> = [],
+): Result<ContextBriefView> => {
+  const sources = loadBriefSources(organizationId, hiddenSkills);
   if (sources.error) return sources;
   const { pinned, memories, skills } = sources.data;
   const head = [BRIEF_TITLE, renderPinned(pinned)].filter(Boolean).join("\n\n");

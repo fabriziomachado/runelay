@@ -232,11 +232,21 @@ export const renameSource = ({ organizationId, name }: SourceKey, nextName: stri
         organizationId,
         name,
       );
+      db.query(
+        "UPDATE resource_access SET resource_id = ? WHERE organization_id = ? AND resource_type = 'source' AND resource_id = ?",
+      ).run(nextName, organizationId, name);
     }),
   );
 
 export const deleteSource = ({ organizationId, name }: SourceKey) =>
-  write(() => db.query("DELETE FROM sources WHERE organization_id = ? AND name = ?").run(organizationId, name));
+  write(
+    db.transaction(() => {
+      db.query("DELETE FROM sources WHERE organization_id = ? AND name = ?").run(organizationId, name);
+      db.query(
+        "DELETE FROM resource_access WHERE organization_id = ? AND resource_type = 'source' AND resource_id = ?",
+      ).run(organizationId, name);
+    }),
+  );
 
 export const listInstalledByUrlHash = (organizationId: string, hashes: string[]): Result<InstalledSourceRow[]> =>
   attemptSync(

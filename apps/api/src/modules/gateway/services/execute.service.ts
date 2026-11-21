@@ -5,12 +5,16 @@ import { runInSandbox } from "@/modules/gateway/sandbox/run-in-sandbox";
 import { callTrackedTool } from "@/modules/gateway/services/tool-call.service";
 import type { ExecuteOutput, GatewayCaller, ToolNamespace } from "@/modules/gateway/types/gateway.types";
 
-export const runCode = async (caller: GatewayCaller, code: string): Promise<Result<ExecuteOutput>> => {
+export const runCode = async (
+  caller: GatewayCaller,
+  code: string,
+  hiddenSources: ReadonlySet<string> = new Set(),
+): Promise<Result<ExecuteOutput>> => {
   const tools = await listLiveTools(caller.organizationId);
   if (tools.error) return tools;
 
   const namespace: ToolNamespace = {};
-  for (const tool of tools.data) {
+  for (const tool of tools.data.filter((candidate) => !hiddenSources.has(candidate.source))) {
     namespace[tool.source] = {
       ...namespace[tool.source],
       [tool.name]: (args = {}) => callTrackedTool(caller, tool, args),

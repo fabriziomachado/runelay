@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Access
+
+- Connectors and skills can be limited to selected API keys. Each connector and skill page has a "Who can use this" section: everyone in the organization (the default) or only the agents you pick. A restricted item disappears from `list_connections`, `search_tools`, `search_context`, the context brief and the `execute` namespace for other keys, and `call_tool`, `read_skill`, `read_skill_file`, `write_skill` and `write_skill_file` answer with `ACCESS_DENIED`. The panel always sees everything. Access is kept per key name, so rotating an agent key keeps it; renaming a connector moves it, and deleting a key, connector or skill removes it.
+
 ## v0.6.8
 
 ### Connections

@@ -14,6 +14,7 @@ import { IconAction } from "@/components/ui/action/icon-action";
 import { ConfirmPopover } from "@/components/ui/overlay/confirm-popover";
 import { formatDate } from "@/lib/format";
 import { useT } from "@/lib/i18n";
+import { ResourceAccessPanel } from "@/modules/access/components/resource-access-panel";
 import { AddAccountDialog } from "@/modules/catalog/components/add-account-dialog";
 import { ConnectorIcon } from "@/modules/catalog/components/connector-icon";
 import { addSourceAccount } from "@/modules/sources/api/sources.api";
@@ -135,6 +136,7 @@ export function SourceDetail({ source, oauthError }: SourceDetailProps) {
       ) : (
         <SourceEditor key={source.updatedAt} source={source} config={config} />
       )}
+      <ResourceAccessPanel type="source" id={name} />
       <RenameSourceDialog key={name} name={name} open={renaming} onOpenChange={setRenaming} />
     </div>
   );

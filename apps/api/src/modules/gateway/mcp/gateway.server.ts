@@ -12,6 +12,7 @@ import {
 } from "@runelay/shared";
 import { z } from "zod";
 import { env } from "@/config/env";
+import { ensureAccess, hiddenResourcesFor } from "@/modules/access/services/access.service";
 import { RESERVED_SOURCES } from "@/modules/activity/constants/activity.constants";
 import { recordToolCall } from "@/modules/activity/repositories/activity.repository";
 import { findTool } from "@/modules/connectors/services/connection.service";
@@ -50,11 +51,18 @@ export const createGatewayServer = (caller: GatewayCaller) => {
     });
     return response;
   };
+  const allowed = (type: "source" | "skill", id: string, run: () => CallToolResult | Promise<CallToolResult>) => {
+    const access = ensureAccess(caller, type, id);
+    return access.error ? toToolResponse(access) : run();
+  };
 
   server.registerTool("list_connections", { description: TOOL_DESCRIPTIONS.listConnections, inputSchema: {} }, () =>
     track(RESERVED_SOURCES.runelay, "list_connections", () => {
+      const hidden = hiddenResourcesFor(caller);
+      if (hidden.error) return toToolResponse(hidden);
       const views = listSourceViews(organizationId);
-      return toToolResponse(views.error ? views : ok(views.data.map(redactView)));
+      if (views.error) return toToolResponse(views);
+      return toToolResponse(ok(views.data.filter((view) => !hidden.data.source.has(view.name)).map(redactView)));
     }),
   );
 
@@ -69,9 +77,11 @@ export const createGatewayServer = (caller: GatewayCaller) => {
       },
     },
     (input) =>
-      track(RESERVED_SOURCES.runelay, "search_tools", async () =>
-        toToolResponse(await searchTools(organizationId, input)),
-      ),
+      track(RESERVED_SOURCES.runelay, "search_tools", async () => {
+        const hidden = hiddenResourcesFor(caller);
+        if (hidden.error) return toToolResponse(hidden);
+        return toToolResponse(await searchTools(organizationId, input, hidden.data.source));
+      }),
   );
 
   server.registerTool(
@@ -81,6 +91,9 @@ export const createGatewayServer = (caller: GatewayCaller) => {
       inputSchema: { name: z.string(), args: z.record(z.string(), z.unknown()).optional() },
     },
     async ({ name, args }) => {
+      const [source = name] = name.split(".", 1);
+      const access = ensureAccess(caller, "source", source);
+      if (access.error) return toToolResponse(access);
       const tool = await findTool(organizationId, name);
       if (tool.error) return toToolResponse(tool);
       return toToolResponse(await callTrackedTool(caller, tool.data, args ?? {}));
@@ -91,7 +104,10 @@ export const createGatewayServer = (caller: GatewayCaller) => {
     server.registerTool(
       "execute",
       { description: TOOL_DESCRIPTIONS.execute, inputSchema: { code: z.string() } },
-      async ({ code }) => toToolResponse(await runCode(caller, code)),
+      async ({ code }) => {
+        const hidden = hiddenResourcesFor(caller);
+        return toToolResponse(hidden.error ? hidden : await runCode(caller, code, hidden.data.source));
+      },
     );
   }
 
@@ -99,7 +115,10 @@ export const createGatewayServer = (caller: GatewayCaller) => {
     "search_context",
     { description: TOOL_DESCRIPTIONS.searchContext, inputSchema: contextSearchSchema.shape },
     (input) =>
-      track(RESERVED_SOURCES.runelay, "search_context", () => toToolResponse(searchContext(organizationId, input))),
+      track(RESERVED_SOURCES.runelay, "search_context", () => {
+        const hidden = hiddenResourcesFor(caller);
+        return toToolResponse(hidden.error ? hidden : searchContext(organizationId, input, hidden.data.skill));
+      }),
   );
 
   server.registerTool(
@@ -146,20 +165,28 @@ export const createGatewayServer = (caller: GatewayCaller) => {
   server.registerTool(
     "read_skill",
     { description: TOOL_DESCRIPTIONS.readSkill, inputSchema: { slug: skillSlugSchema } },
-    ({ slug }) => track(RESERVED_SOURCES.skills, slug, () => toToolResponse(findSkill(organizationId, slug))),
+    ({ slug }) =>
+      track(RESERVED_SOURCES.skills, slug, () =>
+        allowed("skill", slug, () => toToolResponse(findSkill(organizationId, slug))),
+      ),
   );
 
   server.registerTool(
     "read_skill_file",
     { description: TOOL_DESCRIPTIONS.readSkillFile, inputSchema: { slug: skillSlugSchema, path: z.string().min(1) } },
     ({ slug, path }) =>
-      track(RESERVED_SOURCES.skills, slug, () => toToolResponse(findSkillFile(organizationId, slug, path))),
+      track(RESERVED_SOURCES.skills, slug, () =>
+        allowed("skill", slug, () => toToolResponse(findSkillFile(organizationId, slug, path))),
+      ),
   );
 
   server.registerTool(
     "write_skill",
     { description: TOOL_DESCRIPTIONS.writeSkill, inputSchema: skillWriteSchema.shape },
-    (input) => track(RESERVED_SOURCES.skills, input.slug, () => toToolResponse(writeSkill(organizationId, input))),
+    (input) =>
+      track(RESERVED_SOURCES.skills, input.slug, () =>
+        allowed("skill", input.slug, () => toToolResponse(writeSkill(organizationId, input))),
+      ),
   );
 
   server.registerTool(
@@ -169,7 +196,9 @@ export const createGatewayServer = (caller: GatewayCaller) => {
       inputSchema: { slug: skillSlugSchema, ...skillFileSchema.shape },
     },
     ({ slug, ...file }) =>
-      track(RESERVED_SOURCES.skills, slug, () => toToolResponse(writeSkillFile(organizationId, slug, file))),
+      track(RESERVED_SOURCES.skills, slug, () =>
+        allowed("skill", slug, () => toToolResponse(writeSkillFile(organizationId, slug, file))),
+      ),
   );
 
   return server;
