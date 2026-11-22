@@ -238,6 +238,99 @@ describe("gateway filtering per key", () => {
   });
 });
 
+describe("REST filtering per key", () => {
+  const sourceNames = async (auth: { bearer?: string; cookie?: string }) =>
+    ((await body<{ name: string }[]>(await call("/v1/sources", auth))).data ?? []).map((view) => view.name);
+  const skillSlugs = async (auth: { bearer?: string; cookie?: string }) => {
+    const page = (await body<{ items: { slug: string }[]; total: number }>(await call("/v1/skills", auth))).data;
+    return { slugs: page.items.map((item) => item.slug).sort(), total: page.total };
+  };
+  const denied = async (response: Response) => {
+    expect(response.status).toBe(403);
+    expect((await body(response)).error?.code).toBe("ACCESS_DENIED");
+  };
+
+  test("connector list and summary hide restricted connectors from other keys", async () => {
+    expect(await sourceNames({ bearer: beta.key })).toEqual(["public"]);
+    expect(await sourceNames({ bearer: alpha.key })).toEqual(["public", "remote"]);
+    expect(await sourceNames({ cookie: account.cookie })).toEqual(["public", "remote"]);
+    const total = async (auth: { bearer?: string; cookie?: string }) =>
+      (await body<{ total: number }>(await call("/v1/sources/summary", auth))).data.total;
+    expect(await total({ bearer: beta.key })).toBe(1);
+    expect(await total({ bearer: alpha.key })).toBe(2);
+    expect(await total({ cookie: account.cookie })).toBe(2);
+  });
+
+  test("a key cannot read, change, test or delete a hidden connector", async () => {
+    const bearer = beta.key;
+    await denied(await call("/v1/sources/remote", { bearer }));
+    await denied(await call("/v1/sources/remote", { method: "PATCH", bearer, json: { enabled: false } }));
+    await denied(await call("/v1/sources/remote", { method: "DELETE", bearer }));
+    await denied(await call("/v1/sources/remote/test", { method: "POST", bearer }));
+    await denied(await call("/v1/sources/remote/oauth", { method: "POST", bearer }));
+    await denied(await call("/v1/sources/remote/accounts", { method: "POST", bearer, json: { name: "remote-2" } }));
+    expect((await call("/v1/sources/remote", { bearer: alpha.key })).status).toBe(200);
+    expect((await call("/v1/sources/public", { bearer })).status).toBe(200);
+    expect((await call("/v1/sources/remote", { cookie: account.cookie })).status).toBe(200);
+  });
+
+  test("a key cannot overwrite a hidden connector by creating or importing it", async () => {
+    const hijack = { name: "remote", config: { kind: "mcp", url: "http://127.0.0.1:9/evil" } };
+    await denied(await call("/v1/sources", { method: "POST", bearer: beta.key, json: hijack }));
+    const imported = await call("/v1/sources/import", {
+      method: "POST",
+      bearer: beta.key,
+      json: { sources: [hijack, { name: "betaimport", config: { kind: "mcp", url: upstream.url("/mcp") } }] },
+    });
+    expect(imported.status).toBe(200);
+    const result = (await body<{ imported: string[]; skipped: { name: string; reason: string }[] }>(imported)).data;
+    expect(result.imported).toEqual(["betaimport"]);
+    expect(result.skipped).toEqual([{ name: "remote", reason: expect.stringContaining("remote") }]);
+    const remote = await call("/v1/sources/remote", { cookie: account.cookie });
+    expect(JSON.stringify((await body(remote)).data)).not.toContain("evil");
+    expect((await call("/v1/sources/betaimport", { method: "DELETE", bearer: beta.key })).status).toBe(200);
+  });
+
+  test("skill list, read, files, change, delete and export respect skill access", async () => {
+    const own = await skillSlugs({ bearer: beta.key });
+    expect(own.slugs).not.toContain("secret-recipe");
+    expect(own.total).toBe(own.slugs.length);
+    expect((await skillSlugs({ bearer: alpha.key })).slugs).toContain("secret-recipe");
+    expect((await skillSlugs({ cookie: account.cookie })).slugs).toContain("secret-recipe");
+    const bearer = beta.key;
+    await denied(await call("/v1/skills/secret-recipe", { bearer }));
+    await denied(await call("/v1/skills/secret-recipe/files?path=notes.md", { bearer }));
+    await denied(await call("/v1/skills/secret-recipe", { method: "PATCH", bearer, json: { body: "hijacked" } }));
+    await denied(await call("/v1/skills/secret-recipe", { method: "DELETE", bearer }));
+    await denied(
+      await call("/v1/skills/export", { method: "POST", bearer, json: { slugs: ["open-recipe", "secret-recipe"] } }),
+    );
+    const exported = await call("/v1/skills/export", { method: "POST", bearer, json: { slugs: ["open-recipe"] } });
+    expect(exported.status).toBe(200);
+    expect((await call("/v1/skills/secret-recipe", { bearer: alpha.key })).status).toBe(200);
+  });
+
+  test("a key cannot overwrite a hidden skill by importing it", async () => {
+    const skill = { slug: "secret-recipe", name: "x", description: "", body: "hijacked", files: [] };
+    await denied(await call("/v1/skills/import", { method: "POST", bearer: beta.key, json: { skills: [skill] } }));
+    const stored = await call("/v1/skills/secret-recipe", { cookie: account.cookie });
+    expect((await body<{ body: string }>(stored)).data.body).toContain("secret-recipe cake");
+  });
+
+  test("storage failures surface as errors on the REST routes", async () => {
+    await withQueryFaultAsync(HIDDEN_QUERY, async () => {
+      const bearer = beta.key;
+      expect((await call("/v1/sources", { bearer })).status).toBe(500);
+      expect((await call("/v1/sources/summary", { bearer })).status).toBe(500);
+      expect((await call("/v1/sources/public", { bearer })).status).toBe(500);
+      const imported = await call("/v1/sources/import", { method: "POST", bearer, json: { sources: [] } });
+      expect(imported.status).toBe(500);
+      expect((await call("/v1/skills", { bearer })).status).toBe(500);
+      expect((await call("/v1/skills/open-recipe", { bearer })).status).toBe(500);
+    });
+  });
+});
+
 describe("grant lifecycle", () => {
   test("renaming a connector keeps its grants", async () => {
     await put("/sources/public", { visibility: "restricted", keyNames: ["beta"] });

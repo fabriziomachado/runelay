@@ -109,17 +109,20 @@ export const listSourceViews = (organizationId: string, status?: SourceStatus): 
   return ok(views);
 };
 
-export const summarizeSources = (organizationId: string): Result<SourcesSummaryView> => {
+export const summarizeSources = (
+  organizationId: string,
+  excluded: ReadonlySet<string> = new Set(),
+): Result<SourcesSummaryView> => {
   const summary = attemptSync(
     () =>
       db
-        .query<SourcesSummaryView, [string]>(
+        .query<SourcesSummaryView, [string, string]>(
           `SELECT COUNT(*) AS total,
                   COALESCE(SUM(CASE WHEN enabled = 1 THEN tool_count ELSE 0 END), 0) AS tools,
                   COALESCE(SUM(CASE WHEN enabled = 1 AND status <> 'ok' THEN 1 ELSE 0 END), 0) AS attention
-           FROM sources WHERE organization_id = ?`,
+           FROM sources WHERE organization_id = ? AND name NOT IN (SELECT value FROM json_each(?))`,
         )
-        .get(organizationId),
+        .get(organizationId, JSON.stringify([...excluded])),
     "STORAGE_FAILED",
   );
   if (summary.error) return summary;

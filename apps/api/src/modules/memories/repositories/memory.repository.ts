@@ -13,12 +13,14 @@ import {
   type MemoryRefView,
   type MemoryVersionView,
   type MemoryView,
+  type MemoryVisibility,
   ok,
   type Page,
   type Result,
   type UpdateMemoryInput,
 } from "@runelay/shared";
 import { db } from "@/db/connection";
+import { ACCESS_MESSAGES } from "@/modules/access/constants/access.constants";
 import {
   MEMORY_GRAPH_EDGES,
   MEMORY_LIST_COLUMNS,
@@ -36,6 +38,12 @@ import { SQL_NOW } from "@/shared/constants/sql.constants";
 import { toFtsQuery } from "@/shared/utils/fts-query";
 import { pageOf } from "@/shared/utils/page";
 import { isStoredNewer } from "@/shared/utils/stored-newer";
+
+const NONE: ReadonlySet<string> = new Set();
+
+const hiddenJson = (hidden: ReadonlySet<string>) => JSON.stringify([...hidden]);
+
+export const memoryDenied = (slug: string) => fail("ACCESS_DENIED", ACCESS_MESSAGES.memoryDenied(slug));
 
 const syncDerived = (organizationId: string, { slug, name, description, body }: MemoryContent) => {
   db.query("DELETE FROM memory_links WHERE organization_id = ? AND from_slug = ?").run(organizationId, slug);
@@ -71,10 +79,11 @@ const snapshotVersion = (organizationId: string, slug: string) =>
 export const listMemories = (
   organizationId: string,
   { query, type, pinned, cursor, limit }: ListMemoriesInput,
+  hidden: ReadonlySet<string> = NONE,
 ): Result<Page<MemoryListItemView>> => {
   const match = query ? toFtsQuery(query, "AND") : null;
-  const where = ["m.organization_id = ?"];
-  const params: SQLQueryBindings[] = [organizationId];
+  const where = ["m.organization_id = ?", "m.slug NOT IN (SELECT value FROM json_each(?))"];
+  const params: SQLQueryBindings[] = [organizationId, hiddenJson(hidden)];
   if (type) {
     where.push("m.type = ?");
     params.push(type);
@@ -111,7 +120,12 @@ export const listMemories = (
   }, "STORAGE_FAILED");
 };
 
-export const findMemory = (organizationId: string, slug: string): Result<MemoryView> => {
+export const findMemory = (
+  organizationId: string,
+  slug: string,
+  hidden: ReadonlySet<string> = NONE,
+): Result<MemoryView> => {
+  if (hidden.has(slug)) return memoryDenied(slug);
   const row = attemptSync(
     () =>
       db
@@ -136,23 +150,38 @@ export const findMemory = (organizationId: string, slug: string): Result<MemoryV
   if (row.error) return row;
   if (!row.data) return fail("MEMORY_NOT_FOUND", `Memória "${slug}" não encontrada.`);
   const { links, backlinks, brokenLinks, pinned, ...rest } = row.data;
-  return attemptSync(
-    () => ({
+  const visible = (json: string) => (JSON.parse(json) as string[]).filter((other) => !hidden.has(other));
+  return attemptSync(() => {
+    const view = { links: visible(links), backlinks: visible(backlinks), brokenLinks: visible(brokenLinks) };
+    return {
       ...rest,
       pinned: pinned === 1,
-      links: JSON.parse(links) as string[],
-      backlinks: JSON.parse(backlinks) as string[],
-      brokenLinks: JSON.parse(brokenLinks) as string[],
-    }),
-    "STORAGE_FAILED",
-  );
+      ...view,
+      linkCount: view.links.length,
+      backlinkCount: view.backlinks.length,
+    };
+  }, "STORAGE_FAILED");
 };
 
-export const memoryExists = (organizationId: string, slug: string): Result<boolean> => {
-  const row = attemptSync(
-    () => db.query("SELECT 1 FROM memories WHERE organization_id = ? AND slug = ?").get(organizationId, slug),
+export interface MemoryOwnership {
+  visibility: MemoryVisibility;
+  ownerKey: string | null;
+}
+
+/** Null when the memory does not exist. */
+export const findMemoryOwnership = (organizationId: string, slug: string): Result<MemoryOwnership | null> =>
+  attemptSync(
+    () =>
+      db
+        .query<MemoryOwnership, [string, string]>(
+          "SELECT visibility, owner_key AS ownerKey FROM memories WHERE organization_id = ? AND slug = ?",
+        )
+        .get(organizationId, slug),
     "STORAGE_FAILED",
   );
+
+export const memoryExists = (organizationId: string, slug: string): Result<boolean> => {
+  const row = findMemoryOwnership(organizationId, slug);
   return row.error ? row : ok(row.data !== null);
 };
 
@@ -160,13 +189,15 @@ export const insertMemory = (
   organizationId: string,
   input: CreateMemoryInput,
   createdAt: string | null = null,
+  ownerKey: string | null = null,
 ): Result<null> => {
   const written = attemptSync(
     db.transaction(() => {
       const inserted = db
         .query(
-          `INSERT INTO memories (organization_id, slug, name, description, type, body, pinned, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, ${SQL_NOW}))
+          `INSERT INTO memories (organization_id, slug, name, description, type, body, pinned, visibility, owner_key,
+             created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, ${SQL_NOW}))
            ON CONFLICT(organization_id, slug) DO NOTHING`,
         )
         .run(
@@ -177,6 +208,8 @@ export const insertMemory = (
           input.type,
           input.body,
           input.pinned ? 1 : 0,
+          input.visibility ?? "org",
+          ownerKey,
           createdAt,
         );
       if (!inserted.changes) return false;
@@ -197,7 +230,8 @@ export const updateMemoryRow = (organizationId: string, slug: string, input: Upd
         .query<MemoryContent, SQLQueryBindings[]>(
           `UPDATE memories SET
              name = COALESCE(?, name), description = COALESCE(?, description), type = COALESCE(?, type),
-             body = COALESCE(?, body), pinned = COALESCE(?, pinned), updated_at = ${SQL_NOW}
+             body = COALESCE(?, body), pinned = COALESCE(?, pinned), visibility = COALESCE(?, visibility),
+             updated_at = ${SQL_NOW}
            WHERE organization_id = ? AND slug = ?
            RETURNING slug, name, description, body`,
         )
@@ -207,6 +241,7 @@ export const updateMemoryRow = (organizationId: string, slug: string, input: Upd
           input.type ?? null,
           input.body ?? null,
           input.pinned === undefined ? null : input.pinned ? 1 : 0,
+          input.visibility ?? null,
           organizationId,
           slug,
         );
@@ -246,8 +281,13 @@ export const listVersions = (organizationId: string, slug: string): Result<Memor
     "STORAGE_FAILED",
   );
 
-export const describeHealth = (organizationId: string, staleDays: number): Result<MemoryHealthView> =>
+export const describeHealth = (
+  organizationId: string,
+  staleDays: number,
+  hidden: ReadonlySet<string> = NONE,
+): Result<MemoryHealthView> =>
   attemptSync(() => {
+    const shown = (ref: MemoryRefView) => !hidden.has(ref.slug);
     const stale = db
       .query<MemoryRefView, [string, string]>(
         `SELECT ${MEMORY_REF_COLUMNS} FROM memories m
@@ -274,12 +314,20 @@ export const describeHealth = (organizationId: string, staleDays: number): Resul
       .all(organizationId);
     const total =
       db
-        .query<{ total: number }, [string]>("SELECT COUNT(*) AS total FROM memories WHERE organization_id = ?")
-        .get(organizationId)?.total ?? 0;
-    return { staleDays, stale, brokenLinks, isolated, total };
+        .query<{ total: number }, [string, string]>(
+          "SELECT COUNT(*) AS total FROM memories WHERE organization_id = ? AND slug NOT IN (SELECT value FROM json_each(?))",
+        )
+        .get(organizationId, hiddenJson(hidden))?.total ?? 0;
+    return {
+      staleDays,
+      stale: stale.filter(shown),
+      brokenLinks: brokenLinks.filter((link) => !hidden.has(link.from)),
+      isolated: isolated.filter(shown),
+      total,
+    };
   }, "STORAGE_FAILED");
 
-export const describeGraph = (organizationId: string): Result<MemoryGraphView> =>
+export const describeGraph = (organizationId: string, hidden: ReadonlySet<string> = NONE): Result<MemoryGraphView> =>
   attemptSync(() => {
     const nodes = db
       .query<MemoryGraphNodeRow, [string, string]>(
@@ -296,10 +344,30 @@ export const describeGraph = (organizationId: string): Result<MemoryGraphView> =
         `WITH ${MEMORY_GRAPH_EDGES} SELECT source, target FROM edges ORDER BY source, target`,
       )
       .all(organizationId);
-    return { nodes: nodes.map((node) => ({ ...node, pinned: node.pinned === 1 })), edges };
+    if (hidden.size === 0) return { nodes: nodes.map((node) => ({ ...node, pinned: node.pinned === 1 })), edges };
+    const shownEdges = edges.filter((edge) => !hidden.has(edge.source) && !hidden.has(edge.target));
+    const degree = (slug: string) => shownEdges.filter((edge) => edge.source === slug || edge.target === slug).length;
+    return {
+      nodes: nodes
+        .filter((node) => !hidden.has(node.slug))
+        .map((node) => ({ ...node, pinned: node.pinned === 1, degree: degree(node.slug) })),
+      edges: shownEdges,
+    };
   }, "STORAGE_FAILED");
 
-export const upsertMemories = (organizationId: string, memories: ImportedMemoryInput[]): Result<ImportResultView> =>
+export interface MemoryWriter {
+  hidden: ReadonlySet<string>;
+  owner: string | null;
+}
+
+const PANEL_WRITER: MemoryWriter = { hidden: NONE, owner: null };
+
+/** New rows default to private when a named key writes them; existing rows keep their visibility. */
+export const upsertMemories = (
+  organizationId: string,
+  memories: ImportedMemoryInput[],
+  writer: MemoryWriter = PANEL_WRITER,
+): Result<ImportResultView> =>
   attemptSync(
     db.transaction(() => {
       const stored = db.query<StoredMemoryRow, [string, string]>(
@@ -312,7 +380,8 @@ export const upsertMemories = (organizationId: string, memories: ImportedMemoryI
          WHERE organization_id = ? AND slug = ? AND (name <> ? OR description <> ? OR body <> ?)`,
       );
       const upsert = db.query(
-        `INSERT INTO memories (organization_id, slug, name, description, type, body, pinned) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO memories (organization_id, slug, name, description, type, body, pinned, visibility, owner_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(organization_id, slug) DO UPDATE SET
            name = excluded.name, description = excluded.description, type = excluded.type, body = excluded.body,
            pinned = excluded.pinned, updated_at = ${SQL_NOW}`,
@@ -321,6 +390,11 @@ export const upsertMemories = (organizationId: string, memories: ImportedMemoryI
       const unchanged: string[] = [];
       for (const memory of memories) {
         const current = stored.get(organizationId, memory.slug);
+        const visibility = memory.visibility ?? (writer.owner ? "private" : "org");
+        if (writer.hidden.has(memory.slug) || (!current && visibility === "private" && !writer.owner)) {
+          skipped.push(memory.slug);
+          continue;
+        }
         if (current && isSameMemory(current, memory)) {
           unchanged.push(memory.slug);
           continue;
@@ -338,6 +412,8 @@ export const upsertMemories = (organizationId: string, memories: ImportedMemoryI
           memory.type,
           memory.body,
           memory.pinned ? 1 : 0,
+          visibility,
+          writer.owner,
         );
         syncDerived(organizationId, memory);
       }

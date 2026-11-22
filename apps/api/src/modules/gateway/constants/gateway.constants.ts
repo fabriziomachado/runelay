@@ -26,7 +26,7 @@ export const TOOL_DESCRIPTIONS = {
     "Full-text search across the user's memories and skills. Returns slug, name, description and a snippet, best match first.",
   readMemory: "Read one memory by slug, with its body, links and backlinks.",
   writeMemory:
-    "Create or update a memory by slug. Call it right away whenever the user asks to remember, note or save something, or states a lasting preference, rule or decision; do not just acknowledge it. Updating keeps the previous content as a version. Link other memories with [[slug]] in the body.",
+    'Create or update a memory by slug. Call it right away whenever the user asks to remember, note or save something, or states a lasting preference, rule or decision; do not just acknowledge it. Updating keeps the previous content as a version. Link other memories with [[slug]] in the body. A new memory is private to your API key; pass visibility "org" to share it with the whole organization.',
   readSkill: "Read one skill by slug: its full instructions and the list of extra files.",
   readSkillFile: "Read one extra file of a skill by its path.",
   importMemory:
