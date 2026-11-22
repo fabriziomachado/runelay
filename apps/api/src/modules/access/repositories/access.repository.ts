@@ -42,6 +42,19 @@ export const listHiddenFor = (organizationId: string, keyName: string | null): R
   return ok(hidden);
 };
 
+export const listHiddenMemories = (organizationId: string, keyName: string | null): Result<Set<string>> => {
+  const rows = attemptSync(
+    () =>
+      db
+        .query<{ slug: string }, [string, string | null]>(
+          `SELECT slug FROM memories WHERE organization_id = ? AND visibility = 'private' AND owner_key IS NOT ?`,
+        )
+        .all(organizationId, keyName),
+    "STORAGE_FAILED",
+  );
+  return rows.error ? rows : ok(new Set(rows.data.map((row) => row.slug)));
+};
+
 export const findVisibility = (
   organizationId: string,
   type: ResourceType,

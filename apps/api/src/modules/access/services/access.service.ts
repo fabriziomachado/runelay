@@ -13,10 +13,11 @@ import {
   keyNameHasGrants,
   listGrantedKeyNames,
   listHiddenFor,
+  listHiddenMemories,
   listOrganizationKeyNames,
   saveAccess,
 } from "@/modules/access/repositories/access.repository";
-import type { AccessCaller, HiddenResources } from "@/modules/access/types/access.types";
+import type { AccessCaller, HiddenResources, MemoryScope } from "@/modules/access/types/access.types";
 
 export { pruneOrphanGrants } from "@/modules/access/repositories/access.repository";
 
@@ -34,10 +35,36 @@ export const hiddenResourcesFor = ({ organizationId, apiKeyId }: AccessCaller): 
   return listHiddenFor(organizationId, keyName.data);
 };
 
-export const ensureAccess = (caller: AccessCaller, type: ResourceType, id: string): Result<null> => {
+export const OPEN_MEMORY_SCOPE: MemoryScope = { hidden: new Set(), owner: null, isKey: false };
+
+/** Panel sessions see every memory; a key sees org memories plus its own private ones. */
+export const memoryScopeFor = ({ organizationId, apiKeyId }: AccessCaller): Result<MemoryScope> => {
+  if (!apiKeyId) return ok(OPEN_MEMORY_SCOPE);
+  const keyName = findKeyName(organizationId, apiKeyId);
+  if (keyName.error) return keyName;
+  const hidden = listHiddenMemories(organizationId, keyName.data);
+  return hidden.error ? hidden : ok({ hidden: hidden.data, owner: keyName.data, isKey: true });
+};
+
+export const ensureAccessAll = (caller: AccessCaller, type: ResourceType, ids: readonly string[]): Result<null> => {
   const hidden = hiddenResourcesFor(caller);
   if (hidden.error) return hidden;
-  return hidden.data[type].has(id) ? fail("ACCESS_DENIED", ACCESS_MESSAGES.denied(type, id)) : ok(null);
+  const blocked = ids.find((id) => hidden.data[type].has(id));
+  return blocked === undefined ? ok(null) : fail("ACCESS_DENIED", ACCESS_MESSAGES.denied(type, blocked));
+};
+
+export const ensureAccess = (caller: AccessCaller, type: ResourceType, id: string): Result<null> =>
+  ensureAccessAll(caller, type, [id]);
+
+/** Runs `run` only when the caller may touch every id; panel sessions always pass. */
+export const withAccess = async <T>(
+  caller: AccessCaller,
+  type: ResourceType,
+  ids: readonly string[],
+  run: () => Result<T> | Promise<Result<T>>,
+): Promise<Result<T>> => {
+  const access = ensureAccessAll(caller, type, ids);
+  return access.error ? access : run();
 };
 
 export const findResourceAccess = (

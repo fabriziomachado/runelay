@@ -54,8 +54,12 @@ const skillLines = (skills: SkillIndexRow[]) =>
     return `- ${skill.name} (\`${skill.slug}\`)${summary ? `: ${summary}` : ""}`;
   });
 
-export const pinnedInstructions = (organizationId: string, budget: number): Result<string> => {
-  const pinned = listPinnedMemories(organizationId);
+export const pinnedInstructions = (
+  organizationId: string,
+  budget: number,
+  hiddenMemories: Iterable<string> = [],
+): Result<string> => {
+  const pinned = listPinnedMemories(organizationId, hiddenMemories);
   if (pinned.error) return pinned;
   if (pinned.data.length === 0) return ok("");
   const lines = pinned.data.map(({ slug, name }) => `- ${name} (${slug})`);
@@ -66,8 +70,9 @@ export const buildBrief = (
   organizationId: string,
   client: ContextClient,
   hiddenSkills: Iterable<string> = [],
+  hiddenMemories: Iterable<string> = [],
 ): Result<ContextBriefView> => {
-  const sources = loadBriefSources(organizationId, hiddenSkills);
+  const sources = loadBriefSources(organizationId, hiddenSkills, hiddenMemories);
   if (sources.error) return sources;
   const { pinned, memories, skills } = sources.data;
   const head = [BRIEF_TITLE, renderPinned(pinned)].filter(Boolean).join("\n\n");

@@ -5,9 +5,11 @@ import {
   importSourcesSchema,
   listSourcesSchema,
   ok,
+  type Result,
   updateSourceSchema,
 } from "@runelay/shared";
 import { Hono } from "hono";
+import { hiddenResourcesFor, withAccess } from "@/modules/access/services/access.service";
 import { requireOrganization } from "@/modules/auth/middlewares/authenticate";
 import { startLogin } from "@/modules/oauth/services/oauth.service";
 import { detectSourceAuth } from "@/modules/sources/services/auth-detection.service";
@@ -29,53 +31,65 @@ import { validate } from "@/shared/validator";
 
 const actorOf = ({ authMethod, role }: AppEnv["Variables"]) => ({ authMethod, role });
 
+type Vars = AppEnv["Variables"];
+const keyOf = (c: { var: Vars; req: { param: (name: "name") => string } }) => ({
+  organizationId: c.var.organizationId,
+  name: c.req.param("name"),
+});
+const guarded = <T>(vars: Vars, name: string, run: () => Result<T> | Promise<Result<T>>) =>
+  withAccess(vars, "source", [name], run);
+
 export const sourcesRoutes = new Hono<AppEnv>()
   .use(requireOrganization)
   .get("/", validate("query", listSourcesSchema), (c) => {
+    const hidden = hiddenResourcesFor(c.var);
+    if (hidden.error) return respond(c, hidden);
     const views = listSourceViews(c.var.organizationId, c.req.valid("query").status);
-    return respond(c, views.error || c.var.authMethod === "session" ? views : ok(views.data.map(redactView)));
+    if (views.error || c.var.authMethod === "session") return respond(c, views);
+    return respond(c, ok(views.data.filter((view) => !hidden.data.source.has(view.name)).map(redactView)));
   })
-  .post("/", validate("json", createSourceSchema), async (c) =>
-    respond(c, await createSource(c.var.organizationId, c.req.valid("json"), actorOf(c.var)), 201),
-  )
-  .get("/summary", (c) => respond(c, summarizeSources(c.var.organizationId)))
-  .post("/import", validate("json", importSourcesSchema), async (c) =>
-    respond(c, await importSources(c.var.organizationId, c.req.valid("json"), actorOf(c.var))),
-  )
+  .post("/", validate("json", createSourceSchema), async (c) => {
+    const input = c.req.valid("json");
+    return respond(
+      c,
+      await guarded(c.var, input.name, () => createSource(c.var.organizationId, input, actorOf(c.var))),
+      201,
+    );
+  })
+  .get("/summary", (c) => {
+    const hidden = hiddenResourcesFor(c.var);
+    return respond(c, hidden.error ? hidden : summarizeSources(c.var.organizationId, hidden.data.source));
+  })
+  .post("/import", validate("json", importSourcesSchema), async (c) => {
+    const hidden = hiddenResourcesFor(c.var);
+    if (hidden.error) return respond(c, hidden);
+    return respond(
+      c,
+      await importSources(c.var.organizationId, c.req.valid("json"), actorOf(c.var), hidden.data.source),
+    );
+  })
   .post("/detect-auth", validate("json", detectSourceAuthSchema), async (c) =>
     respond(c, await detectSourceAuth(c.req.valid("json").url)),
   )
-  .get("/:name", (c) => {
-    const view = findSourceView({ organizationId: c.var.organizationId, name: c.req.param("name") });
+  .get("/:name", async (c) => {
+    const view = await guarded(c.var, c.req.param("name"), () => findSourceView(keyOf(c)));
     return respond(c, view.error || c.var.authMethod === "session" ? view : ok(redactView(view.data)));
   })
   .patch("/:name", validate("json", updateSourceSchema), async (c) =>
     respond(
       c,
-      await updateSource(
-        { organizationId: c.var.organizationId, name: c.req.param("name") },
-        c.req.valid("json"),
-        actorOf(c.var),
-      ),
+      await guarded(c.var, c.req.param("name"), () => updateSource(keyOf(c), c.req.valid("json"), actorOf(c.var))),
     ),
   )
-  .delete("/:name", async (c) =>
-    respond(c, await removeSource({ organizationId: c.var.organizationId, name: c.req.param("name") })),
-  )
+  .delete("/:name", async (c) => respond(c, await guarded(c.var, c.req.param("name"), () => removeSource(keyOf(c)))))
   .post("/:name/accounts", validate("json", addSourceAccountSchema), async (c) =>
     respond(
       c,
-      await addSourceAccount(
-        { organizationId: c.var.organizationId, name: c.req.param("name") },
-        c.req.valid("json").name,
-        actorOf(c.var),
+      await guarded(c.var, c.req.param("name"), () =>
+        addSourceAccount(keyOf(c), c.req.valid("json").name, actorOf(c.var)),
       ),
       201,
     ),
   )
-  .post("/:name/test", async (c) =>
-    respond(c, await testSource({ organizationId: c.var.organizationId, name: c.req.param("name") })),
-  )
-  .post("/:name/oauth", async (c) =>
-    respond(c, await startLogin({ organizationId: c.var.organizationId, name: c.req.param("name") })),
-  );
+  .post("/:name/test", async (c) => respond(c, await guarded(c.var, c.req.param("name"), () => testSource(keyOf(c)))))
+  .post("/:name/oauth", async (c) => respond(c, await guarded(c.var, c.req.param("name"), () => startLogin(keyOf(c)))));

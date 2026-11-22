@@ -10,12 +10,15 @@ export const memorySlugSchema = z
   .max(120)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use letras minúsculas, números e hífen");
 
+export const memoryVisibilitySchema = z.enum(["org", "private"]);
+
 const memoryFields = {
   name: z.string().trim().min(1).max(200),
   description: z.string().trim().max(400),
   type: memoryTypeSchema,
   body: z.string().max(100_000),
   pinned: z.boolean(),
+  visibility: memoryVisibilitySchema,
 };
 
 export const createMemorySchema = z.object({
@@ -23,6 +26,7 @@ export const createMemorySchema = z.object({
   slug: memorySlugSchema,
   description: memoryFields.description.default(""),
   pinned: memoryFields.pinned.default(false),
+  visibility: memoryVisibilitySchema.optional(),
 });
 
 export const updateMemorySchema = z
@@ -50,6 +54,7 @@ export const memoryWriteSchema = z.object({
   name: memoryFields.name.optional(),
   description: memoryFields.description.optional(),
   type: memoryTypeSchema.optional(),
+  visibility: memoryVisibilitySchema.optional(),
 });
 
 export const MEMORY_IMPORT_TOOL_LIMIT = 200;

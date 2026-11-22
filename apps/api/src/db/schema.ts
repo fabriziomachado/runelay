@@ -124,4 +124,6 @@ export const MIGRATIONS = [
     PRIMARY KEY (organization_id, resource_type, resource_id, key_name)
   )`,
   "CREATE INDEX IF NOT EXISTS resource_access_key ON resource_access (organization_id, key_name)",
+  "ALTER TABLE memories ADD COLUMN visibility TEXT NOT NULL DEFAULT 'org'",
+  "ALTER TABLE memories ADD COLUMN owner_key TEXT",
 ];

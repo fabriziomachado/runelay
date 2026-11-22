@@ -12,6 +12,7 @@ import {
   type UpdateSourceInput,
 } from "@runelay/shared";
 import { parseClientConfig } from "@runelay/shared/importers";
+import { ACCESS_MESSAGES } from "@/modules/access/constants/access.constants";
 import { connectSource, disconnectSource } from "@/modules/connectors/services/connection.service";
 import {
   deleteSource,
@@ -190,11 +191,18 @@ export const importSources = async (
   organizationId: string,
   input: ImportSourcesInput,
   actor: SourceActor,
+  blocked: ReadonlySet<string> = new Set(),
 ): Promise<Result<ImportView>> => {
   const parsed: Result<ImportSourceInput[]> =
     "config" in input ? parseClientConfig(input.config, {}) : ok(input.sources);
   if (parsed.error) return parsed;
-  const checks = await Promise.all(parsed.data.map((source) => checkSourcePolicy(source.config, actor)));
+  const checks = await Promise.all(
+    parsed.data.map((source) =>
+      blocked.has(source.name)
+        ? fail("ACCESS_DENIED", ACCESS_MESSAGES.denied("source", source.name))
+        : checkSourcePolicy(source.config, actor),
+    ),
+  );
   const permitted = parsed.data.filter((_, index) => !checks[index]?.error);
   const alreadyConnected = new Set(
     permitted

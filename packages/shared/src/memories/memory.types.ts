@@ -6,11 +6,13 @@ import type {
   listMemoriesSchema,
   memoryImportItemSchema,
   memoryTypeSchema,
+  memoryVisibilitySchema,
   memoryWriteSchema,
   updateMemorySchema,
 } from "./memory.schema";
 
 export type MemoryType = z.infer<typeof memoryTypeSchema>;
+export type MemoryVisibility = z.infer<typeof memoryVisibilitySchema>;
 export type CreateMemoryInput = z.infer<typeof createMemorySchema>;
 export type UpdateMemoryInput = z.infer<typeof updateMemorySchema>;
 export type ListMemoriesInput = z.infer<typeof listMemoriesSchema>;
@@ -32,6 +34,8 @@ export interface MemoryListItemView {
   description: string;
   type: MemoryType;
   pinned: boolean;
+  visibility: MemoryVisibility;
+  ownerKey: string | null;
   linkCount: number;
   backlinkCount: number;
   updatedAt: string;

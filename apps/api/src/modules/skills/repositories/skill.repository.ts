@@ -61,6 +61,7 @@ const isSameSkill = (stored: StoredSkillRow, files: SkillFileInput[], skill: Imp
 export const listSkills = (
   organizationId: string,
   { query, enabled, cursor, limit }: ListSkillsInput,
+  excluded: ReadonlySet<string> = new Set(),
 ): Result<Page<SkillListItemView>> => {
   const match = query ? toFtsQuery(query, "AND") : null;
   const params: SQLQueryBindings[] = match ? [organizationId, match] : [organizationId];
@@ -71,6 +72,10 @@ export const listSkills = (
   if (enabled !== undefined) {
     conditions.push("s.enabled = ?");
     params.push(enabled ? 1 : 0);
+  }
+  if (excluded.size) {
+    conditions.push("s.slug NOT IN (SELECT value FROM json_each(?))");
+    params.push(JSON.stringify([...excluded]));
   }
   const where = conditions.join(" AND ");
   const order = match ? "bm25(skills_fts, 4, 6, 3, 1)" : "s.name";

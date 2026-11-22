@@ -4,6 +4,7 @@ import {
   contextSearchSchema,
   MEMORY_IMPORT_TOOL_LIMIT,
   memorySlugSchema,
+  memoryVisibilitySchema,
   memoryWriteSchema,
   ok,
   skillFileSchema,
@@ -12,7 +13,8 @@ import {
 } from "@runelay/shared";
 import { z } from "zod";
 import { env } from "@/config/env";
-import { ensureAccess, hiddenResourcesFor } from "@/modules/access/services/access.service";
+import { ensureAccess, hiddenResourcesFor, memoryScopeFor } from "@/modules/access/services/access.service";
+import type { MemoryScope } from "@/modules/access/types/access.types";
 import { RESERVED_SOURCES } from "@/modules/activity/constants/activity.constants";
 import { recordToolCall } from "@/modules/activity/repositories/activity.repository";
 import { findTool } from "@/modules/connectors/services/connection.service";
@@ -35,7 +37,14 @@ import { redactView } from "@/modules/sources/utils/redact-config";
 
 export const createGatewayServer = (caller: GatewayCaller) => {
   const { organizationId } = caller;
-  const pinned = pinnedInstructions(organizationId, GATEWAY_INSTRUCTIONS_MAX_CHARS - GATEWAY_INSTRUCTIONS.length - 2);
+  const initialScope = memoryScopeFor(caller);
+  const pinned = initialScope.error
+    ? initialScope
+    : pinnedInstructions(
+        organizationId,
+        GATEWAY_INSTRUCTIONS_MAX_CHARS - GATEWAY_INSTRUCTIONS.length - 2,
+        initialScope.data.hidden,
+      );
   const instructions = [GATEWAY_INSTRUCTIONS, pinned.data ?? ""].filter(Boolean).join("\n\n");
   const server = new McpServer(GATEWAY_INFO, { instructions });
   const track = async (source: string, tool: string, run: () => CallToolResult | Promise<CallToolResult>) => {
@@ -50,6 +59,10 @@ export const createGatewayServer = (caller: GatewayCaller) => {
       durationMs: performance.now() - startedAt,
     });
     return response;
+  };
+  const withScope = (run: (scope: MemoryScope) => CallToolResult) => {
+    const scope = memoryScopeFor(caller);
+    return scope.error ? toToolResponse(scope) : run(scope.data);
   };
   const allowed = (type: "source" | "skill", id: string, run: () => CallToolResult | Promise<CallToolResult>) => {
     const access = ensureAccess(caller, type, id);
@@ -117,14 +130,20 @@ export const createGatewayServer = (caller: GatewayCaller) => {
     (input) =>
       track(RESERVED_SOURCES.runelay, "search_context", () => {
         const hidden = hiddenResourcesFor(caller);
-        return toToolResponse(hidden.error ? hidden : searchContext(organizationId, input, hidden.data.skill));
+        if (hidden.error) return toToolResponse(hidden);
+        return withScope((scope) =>
+          toToolResponse(searchContext(organizationId, input, hidden.data.skill, scope.hidden)),
+        );
       }),
   );
 
   server.registerTool(
     "read_memory",
     { description: TOOL_DESCRIPTIONS.readMemory, inputSchema: { slug: memorySlugSchema } },
-    ({ slug }) => track(RESERVED_SOURCES.memories, slug, () => toToolResponse(findMemory(organizationId, slug))),
+    ({ slug }) =>
+      track(RESERVED_SOURCES.memories, slug, () =>
+        withScope((scope) => toToolResponse(findMemory(organizationId, slug, scope))),
+      ),
   );
 
   server.registerTool(
@@ -133,7 +152,10 @@ export const createGatewayServer = (caller: GatewayCaller) => {
       description: TOOL_DESCRIPTIONS.writeMemory,
       inputSchema: memoryWriteSchema.shape,
     },
-    (input) => track(RESERVED_SOURCES.memories, input.slug, () => toToolResponse(writeMemory(organizationId, input))),
+    (input) =>
+      track(RESERVED_SOURCES.memories, input.slug, () =>
+        withScope((scope) => toToolResponse(writeMemory(organizationId, input, undefined, scope))),
+      ),
   );
 
   server.registerTool(
@@ -149,6 +171,7 @@ export const createGatewayServer = (caller: GatewayCaller) => {
               name: z.string().optional(),
               description: z.string().optional(),
               type: z.string().optional(),
+              visibility: memoryVisibilitySchema.optional(),
               createdAt: z.string().optional(),
             }),
           )
@@ -158,7 +181,7 @@ export const createGatewayServer = (caller: GatewayCaller) => {
     },
     ({ items }) =>
       track(RESERVED_SOURCES.memories, "import_memory", () =>
-        toToolResponse(ok(importMemoryItems(organizationId, items))),
+        withScope((scope) => toToolResponse(ok(importMemoryItems(organizationId, items, scope)))),
       ),
   );
 
